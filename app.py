@@ -81,7 +81,7 @@ BOW_MODEL    = "./lr_bow_news_classifier.joblib"
 BOW_LABELS   = "./lr_bow_label_mapping.json"
 BOW_RESULTS  = "./lr_bow_training_results.json"
 
-DEFAULT_DATA = "News_Category_Dataset_v3.json"
+DEFAULT_DATA = "preprocessed_news_data.csv"  # faster/smaller than the raw .json
 RANDOM_STATE = 42
 
 CATEGORY_MAP = {
@@ -181,9 +181,44 @@ def get_top_bow_words(headline, description, top_n=8):
 # Training functions
 # ─────────────────────────────────────────────────────────────────
 def _common_load(data_path):
-    """Shared data loading and preprocessing."""
+    """Shared data loading and preprocessing.
+
+    Supports two input types, chosen by file extension:
+      - raw News_Category_Dataset_v3.json (newline-delimited JSON) -> full
+        pipeline: merge categories, build+clean text, encode labels, split.
+      - preprocessed_news_data.csv (columns: text, merged_category, label,
+        split) -> skips straight to training. This is the smaller, faster
+        option since the cleaning + stratified split are already baked in.
+    """
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import LabelEncoder
+
+    if data_path.lower().endswith(".csv"):
+        df = pd.read_csv(data_path)
+        required = {"text", "merged_category", "label", "split"}
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(
+                f"'{data_path}' is missing expected column(s): {sorted(missing)}. "
+                "Expected a CSV produced by preprocess_news_data.py."
+            )
+
+        label_map = (
+            df[["label", "merged_category"]]
+            .drop_duplicates()
+            .set_index("label")["merged_category"]
+            .to_dict()
+        )
+        label_map   = {str(k): v for k, v in sorted(label_map.items())}
+        label_names = [label_map[str(i)] for i in range(len(label_map))]
+
+        train_x = df.loc[df["split"] == "train", "text"].tolist()
+        test_x  = df.loc[df["split"] == "test",  "text"].tolist()
+        train_y = df.loc[df["split"] == "train", "label"].tolist()
+        test_y  = df.loc[df["split"] == "test",  "label"].tolist()
+        return train_x, test_x, train_y, test_y, label_names, label_map
+
+    # ---- raw JSON path (original behavior, unchanged) ----
     df = pd.read_json(data_path, lines=True)
     df = df[["headline","short_description","category"]].dropna(subset=["headline","category"])
     df["merged_category"] = df["category"].map(CATEGORY_MAP)
