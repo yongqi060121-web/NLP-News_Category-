@@ -111,11 +111,6 @@ CATEGORY_ICONS = {
     "IMPACT":"💡","ENVIRONMENT":"🌿","SCIENCE & TECH":"🔬","EDUCATION":"📚",
 }
 
-# ─────────────────────────────────────────────────────────────────
-# Global variables for training threads
-# ─────────────────────────────────────────────────────────────────
-_svm_log, _svm_running, _svm_done, _svm_results = [], False, False, None
-_bow_log, _bow_running, _bow_done, _bow_results = [], False, False, None
 
 # ─────────────────────────────────────────────────────────────────
 # Session state
@@ -237,96 +232,6 @@ def _common_load(data_path):
     )
     return train_x, test_x, train_y, test_y, label_names, label_map
 
-
-def train_svm_thread(data_path, c_val, max_feat, ngram_max):
-    global _svm_log, _svm_running, _svm_done, _svm_results
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.svm import LinearSVC
-    from sklearn.pipeline import Pipeline
-    from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
-
-    def log(m): _svm_log.append(m)
-    try:
-        log("📂 Loading and preprocessing dataset...")
-        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(data_path)
-        log(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
-        log(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
-
-        log(f"⚙️  Building TF-IDF + LinearSVC  (C={c_val}, features={max_feat:,}, ngram=1-{ngram_max})")
-        pipe = Pipeline([
-            ("tfidf", TfidfVectorizer(ngram_range=(1,ngram_max), max_features=max_feat,
-                                      sublinear_tf=True, min_df=2,
-                                      strip_accents="unicode", token_pattern=r"\w{2,}")),
-            ("svm",  LinearSVC(C=c_val, max_iter=2000, random_state=RANDOM_STATE)),
-        ])
-        log("🚀 Training SVM... (1–5 minutes)")
-        pipe.fit(train_x, train_y)
-        log("✅ Training complete!")
-
-        preds = pipe.predict(test_x)
-        acc   = accuracy_score(test_y, preds)
-        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
-        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
-        log(f"📈 Accuracy:{acc:.4f}  F1:{f1:.4f}  Precision:{p:.4f}  Recall:{r:.4f}")
-
-        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
-        with open(SVM_RESULTS,"w") as f: json.dump(results, f, indent=2)
-        joblib.dump(pipe, SVM_MODEL)
-        with open(SVM_LABELS,"w") as f: json.dump(label_map, f, indent=2)
-        _svm_results = results
-        _svm_done    = True
-        log("🎉 SVM model saved! Click 'Load SVM Model'.")
-    except Exception as e:
-        import traceback; log(f"❌ {e}"); log(traceback.format_exc())
-    finally:
-        _svm_running = False
-
-
-def train_bow_thread(data_path, c_val, max_feat, ngram_max, binary):
-    global _bow_log, _bow_running, _bow_done, _bow_results
-    from sklearn.feature_extraction.text import CountVectorizer
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.pipeline import Pipeline
-    from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
-
-    def log(m): _bow_log.append(m)
-    try:
-        log("📂 Loading and preprocessing dataset...")
-        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(data_path)
-        log(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
-        log(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
-
-        mode = "binary" if binary else "counts"
-        log(f"⚙️  Building BoW + Logistic Regression  (C={c_val}, features={max_feat:,}, ngram=1-{ngram_max}, mode={mode})")
-        pipe = Pipeline([
-            ("bow", CountVectorizer(ngram_range=(1,ngram_max), max_features=max_feat,
-                                    min_df=2, strip_accents="unicode",
-                                    token_pattern=r"\w{2,}", binary=binary)),
-            ("lr",  LogisticRegression(C=c_val, max_iter=1000, solver="lbfgs",
-                                    
-                                    random_state=RANDOM_STATE)),
-        ])
-        log("🚀 Training Logistic Regression... (2–8 minutes)")
-        pipe.fit(train_x, train_y)
-        log("✅ Training complete!")
-
-        preds = pipe.predict(test_x)
-        acc   = accuracy_score(test_y, preds)
-        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
-        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
-        log(f"📈 Accuracy:{acc:.4f}  F1:{f1:.4f}  Precision:{p:.4f}  Recall:{r:.4f}")
-
-        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
-        with open(BOW_RESULTS,"w") as f: json.dump(results, f, indent=2)
-        joblib.dump(pipe, BOW_MODEL)
-        with open(BOW_LABELS,"w") as f: json.dump(label_map, f, indent=2)
-        _bow_results = results
-        _bow_done    = True
-        log("🎉 BoW model saved! Click 'Load BoW Model'.")
-    except Exception as e:
-        import traceback; log(f"❌ {e}"); log(traceback.format_exc())
-    finally:
-        _bow_running = False
 
 # ─────────────────────────────────────────────────────────────────
 # Auto-load models if saved on disk
@@ -550,32 +455,60 @@ with tab_train:
             svm_feat   = st.select_slider("Max TF-IDF features", options=[10000,50000,100000,200000], value=100000, key="svm_feat")
             svm_ngram  = st.radio("N-gram range", [1,2], index=1, horizontal=True, key="svm_ngram")
 
-        if _svm_running:
-            st.button("⏳ SVM training…", disabled=True, use_container_width=True, key="svm_btn_dis")
-        else:
-            if st.button("🚀 Train SVM", type="primary", key="svm_train_btn"):
-                if not os.path.exists(svm_data):
-                    st.error(f"Dataset not found: {svm_data}")
-                else:
-                    _svm_log, _svm_done, _svm_running, _svm_results = [], False, True, None
-                    threading.Thread(target=train_svm_thread,
-                                    args=(svm_data, svm_c, svm_feat, svm_ngram),
-                                    daemon=True).start()
-                    st.rerun()
+        if st.button("🚀 Train SVM", type="primary", key="svm_train_btn"):
+            if not os.path.exists(svm_data):
+                st.error(f"Dataset not found: {svm_data}")
+            else:
+                from sklearn.feature_extraction.text import TfidfVectorizer
+                from sklearn.svm import LinearSVC
+                from sklearn.pipeline import Pipeline
+                from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
 
-        if _svm_log:
-            st.markdown("<div class='log-box'>"+"<br>".join(_svm_log)+"</div>", unsafe_allow_html=True)
-            if _svm_running:
-                time.sleep(2); st.rerun()
-            if _svm_done:
-                if _svm_results: st.session_state.svm_results = _svm_results
-                st.success("✅ SVM training complete!")
-                if st.button("📂 Load SVM Model", key="load_svm"):
-                    load_svm.clear()
-                    p,lm = load_svm()
-                    st.session_state.svm_pipeline = p
-                    st.session_state.svm_labels   = lm
-                    st.rerun()
+                with st.status("Training SVM + TF-IDF...", expanded=True) as status:
+                    try:
+                        st.write("📂 Loading and preprocessing dataset...")
+                        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(svm_data)
+                        st.write(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
+                        st.write(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
+
+                        st.write(f"⚙️ Building TF-IDF + LinearSVC  (C={svm_c}, features={svm_feat:,}, ngram=1-{svm_ngram})")
+                        pipe = Pipeline([
+                            ("tfidf", TfidfVectorizer(ngram_range=(1,svm_ngram), max_features=svm_feat,
+                                                      sublinear_tf=True, min_df=2,
+                                                      strip_accents="unicode", token_pattern=r"\w{2,}")),
+                            ("svm",  LinearSVC(C=svm_c, max_iter=2000, random_state=RANDOM_STATE)),
+                        ])
+                        st.write("🚀 Training SVM... (this can take a few minutes)")
+                        pipe.fit(train_x, train_y)
+                        st.write("✅ Training complete!")
+
+                        preds = pipe.predict(test_x)
+                        acc   = accuracy_score(test_y, preds)
+                        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
+                        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
+                        st.write(f"📈 Accuracy: {acc:.4f}  F1: {f1:.4f}  Precision: {p:.4f}  Recall: {r:.4f}")
+
+                        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
+                        with open(SVM_RESULTS,"w") as f: json.dump(results, f, indent=2)
+                        joblib.dump(pipe, SVM_MODEL)
+                        with open(SVM_LABELS,"w") as f: json.dump(label_map, f, indent=2)
+                        st.session_state.svm_results = results
+                        st.write("🎉 SVM model saved!")
+
+                        status.update(label="✅ SVM training complete!", state="complete", expanded=False)
+                    except Exception as e:
+                        import traceback
+                        st.write(f"❌ {e}")
+                        st.code(traceback.format_exc())
+                        status.update(label="❌ SVM training failed", state="error", expanded=True)
+
+        if st.session_state.get("svm_results") is not None:
+            if st.button("📂 Load SVM Model", key="load_svm"):
+                load_svm.clear()
+                p,lm = load_svm()
+                st.session_state.svm_pipeline = p
+                st.session_state.svm_labels   = lm
+                st.rerun()
 
     st.markdown("---")
 
@@ -591,32 +524,62 @@ with tab_train:
 
         bow_binary = st.toggle("Binary mode (word presence only)", value=False, key="bow_binary")
 
-        if _bow_running:
-            st.button("⏳ BoW training…", disabled=True, use_container_width=True, key="bow_btn_dis")
-        else:
-            if st.button("🚀 Train LR + BoW", type="primary", key="bow_train_btn"):
-                if not os.path.exists(bow_data):
-                    st.error(f"Dataset not found: {bow_data}")
-                else:
-                    _bow_log, _bow_done, _bow_running, _bow_results = [], False, True, None
-                    threading.Thread(target=train_bow_thread,
-                                    args=(bow_data, bow_c, bow_feat, bow_ngram, bow_binary),
-                                    daemon=True).start()
-                    st.rerun()
+        if st.button("🚀 Train LR + BoW", type="primary", key="bow_train_btn"):
+            if not os.path.exists(bow_data):
+                st.error(f"Dataset not found: {bow_data}")
+            else:
+                from sklearn.feature_extraction.text import CountVectorizer
+                from sklearn.linear_model import LogisticRegression
+                from sklearn.pipeline import Pipeline
+                from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
 
-        if _bow_log:
-            st.markdown("<div class='log-box'>"+"<br>".join(_bow_log)+"</div>", unsafe_allow_html=True)
-            if _bow_running:
-                time.sleep(2); st.rerun()
-            if _bow_done:
-                if _bow_results: st.session_state.bow_results = _bow_results
-                st.success("✅ BoW training complete!")
-                if st.button("📂 Load BoW Model", key="load_bow"):
-                    load_bow.clear()
-                    p,lm = load_bow()
-                    st.session_state.bow_pipeline = p
-                    st.session_state.bow_labels   = lm
-                    st.rerun()
+                with st.status("Training LR + Bag-of-Words...", expanded=True) as status:
+                    try:
+                        st.write("📂 Loading and preprocessing dataset...")
+                        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(bow_data)
+                        st.write(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
+                        st.write(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
+
+                        mode = "binary" if bow_binary else "counts"
+                        st.write(f"⚙️ Building BoW + Logistic Regression  (C={bow_c}, features={bow_feat:,}, ngram=1-{bow_ngram}, mode={mode})")
+                        pipe = Pipeline([
+                            ("bow", CountVectorizer(ngram_range=(1,bow_ngram), max_features=bow_feat,
+                                                    min_df=2, strip_accents="unicode",
+                                                    token_pattern=r"\w{2,}", binary=bow_binary)),
+                            ("lr",  LogisticRegression(C=bow_c, max_iter=1000, solver="lbfgs",
+                                                        random_state=RANDOM_STATE)),
+                        ])
+                        st.write("🚀 Training Logistic Regression... (this can take a few minutes)")
+                        pipe.fit(train_x, train_y)
+                        st.write("✅ Training complete!")
+
+                        preds = pipe.predict(test_x)
+                        acc   = accuracy_score(test_y, preds)
+                        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
+                        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
+                        st.write(f"📈 Accuracy: {acc:.4f}  F1: {f1:.4f}  Precision: {p:.4f}  Recall: {r:.4f}")
+
+                        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
+                        with open(BOW_RESULTS,"w") as f: json.dump(results, f, indent=2)
+                        joblib.dump(pipe, BOW_MODEL)
+                        with open(BOW_LABELS,"w") as f: json.dump(label_map, f, indent=2)
+                        st.session_state.bow_results = results
+                        st.write("🎉 BoW model saved!")
+
+                        status.update(label="✅ BoW training complete!", state="complete", expanded=False)
+                    except Exception as e:
+                        import traceback
+                        st.write(f"❌ {e}")
+                        st.code(traceback.format_exc())
+                        status.update(label="❌ BoW training failed", state="error", expanded=True)
+
+        if st.session_state.get("bow_results") is not None:
+            if st.button("📂 Load BoW Model", key="load_bow"):
+                load_bow.clear()
+                p,lm = load_bow()
+                st.session_state.bow_pipeline = p
+                st.session_state.bow_labels   = lm
+                st.rerun()
 
 # ══════════════════════════════════════════════════════════════════
 # TAB 3 — RESULTS
