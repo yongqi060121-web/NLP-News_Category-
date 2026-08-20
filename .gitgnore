@@ -1,0 +1,23 @@
+# Raw & intermediate data — NOT needed to deploy the app.
+# Predict and Results tabs only read the .joblib models + the small
+# *_label_mapping.json / *_training_results.json files, all of which
+# are small enough to commit directly.
+News_Category_Dataset_v3.json
+preprocessed_news_data.csv
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Streamlit local secrets (never commit these)
+.streamlit/secrets.toml
+
+# OS cruft
+.DS_Store
+Thumbs.db
