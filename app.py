@@ -380,6 +380,21 @@ with tab_predict:
                     other_pct = sum(v for _, v in rest)
                     return top, rest, other_pct
 
+                def _hover_texts(chart_items, rest):
+                    """Per-bar hover text: normal bars just show their own
+                    percentage; the 'Other' bar shows every folded-in category
+                    and its percentage, one per line."""
+                    texts = []
+                    for c, v in chart_items:
+                        if c == "Other" and rest:
+                            lines = "<br>".join(
+                                f"{CATEGORY_ICONS.get(rc,'📰')} {rc}: {rv:.1%}" for rc, rv in rest
+                            )
+                            texts.append(f"<b>Other — {v:.1%} total</b><br>{lines}")
+                        else:
+                            texts.append(f"{CATEGORY_ICONS.get(c,'📰')} {c}: {v:.1%}")
+                    return texts
+
                 with left:
                     if svm_pred:
                         icon = CATEGORY_ICONS.get(svm_pred, "📰")
@@ -400,6 +415,8 @@ with tab_predict:
                             marker_color=["#2196f3" if c==svm_pred else "#2a3040" for c,_ in chart_svm],
                             text=[f"{v:.1%}" for _,v in chart_svm],
                             textposition="outside", textfont=dict(color="#c5cdd8", size=11),
+                            hovertext=_hover_texts(chart_svm, rest_svm),
+                            hovertemplate="%{hovertext}<extra></extra>",
                         ))
                         fig.update_layout(
                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -407,6 +424,7 @@ with tab_predict:
                             xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
                             yaxis=dict(autorange="reversed", showgrid=False),
                             margin=dict(l=0,r=70,t=10,b=10), height=300,
+                            hoverlabel=dict(bgcolor="#1a1f2e", font_size=12, font_family="Inter", align="left"),
                         )
                         st.plotly_chart(fig, use_container_width=True)
 
@@ -437,6 +455,8 @@ with tab_predict:
                             marker_color=["#f39c12" if c==bow_pred else "#2a3040" for c,_ in chart_bow],
                             text=[f"{v:.1%}" for _,v in chart_bow],
                             textposition="outside", textfont=dict(color="#c5cdd8", size=11),
+                            hovertext=_hover_texts(chart_bow, rest_bow),
+                            hovertemplate="%{hovertext}<extra></extra>",
                         ))
                         fig2.update_layout(
                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -444,6 +464,7 @@ with tab_predict:
                             xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
                             yaxis=dict(autorange="reversed", showgrid=False),
                             margin=dict(l=0,r=70,t=10,b=10), height=300,
+                            hoverlabel=dict(bgcolor="#1a1f2e", font_size=12, font_family="Inter", align="left"),
                         )
                         st.plotly_chart(fig2, use_container_width=True)
 
