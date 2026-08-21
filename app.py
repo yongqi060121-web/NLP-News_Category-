@@ -328,15 +328,31 @@ with tab_predict:
             st.session_state.headline_input = h
             st.session_state.desc_input     = d
 
-        ex_cols  = st.columns(4)
         examples = [
-            ("💼 Business",     "Markets rally as inflation cools",   "Stocks surged after CPI data came in below expectations."),
-            ("⚽ Sports",       "World Cup Final: Argentina wins",     "Argentina beat France on penalties in a thrilling final."),
-            ("🔬 Science",      "NASA discovers water on Mars",        "Scientists confirm liquid water beneath the Martian south polar ice cap."),
-            ("🎬 Entertainment","Oscars 2024: Best Picture winner",    "Oppenheimer swept the Oscars taking home seven awards."),
+            ("🏛️ Politics",        "Senate passes bipartisan infrastructure bill",        "Lawmakers from both parties reached a compromise on funding for roads and bridges."),
+            ("🧘 Wellness",         "New study links meditation to lower stress levels",   "Researchers found a 20-minute daily practice significantly reduced cortisol in participants."),
+            ("🎬 Entertainment",    "Oscars 2024: Best Picture winner",                    "Oppenheimer swept the Oscars taking home seven awards."),
+            ("✈️ Travel",           "Hidden gem: this coastal town is 2024's top pick",    "Travelers are flocking to this quiet fishing village for its beaches and low prices."),
+            ("💄 Style & Beauty",   "Fall's biggest fashion trend revealed",               "Designers are embracing bold colors and oversized silhouettes this season."),
+            ("👶 Parenting",        "Pediatricians rethink advice on toddler screen time", "New guidelines suggest quality of content matters more than strict time limits."),
+            ("🗣️ Voices",          "Why representation in media still matters",           "A personal essay on growing up without seeing yourself reflected on screen."),
+            ("🍽️ Food & Drink",    "The rise of plant-based comfort food",                "Restaurants are reinventing classic dishes with vegan twists that win over skeptics."),
+            ("💼 Business",         "Markets rally as inflation cools",                    "Stocks surged after CPI data came in below expectations."),
+            ("😄 Comedy",           "Late-night host's monologue goes viral",              "The bit about airline food somehow found a way to feel fresh again."),
+            ("⚽ Sports",           "World Cup Final: Argentina wins",                     "Argentina beat France on penalties in a thrilling final."),
+            ("🏠 Home & Living",    "Small-space living: 10 tips to maximize an apartment","Interior designers share their favorite tricks for making tiny rooms feel bigger."),
+            ("🌍 World News",       "Global leaders meet to discuss climate funding",      "Delegates from over 100 countries convened to negotiate a new aid package."),
+            ("💍 Weddings & Divorce","Micro-weddings are having a moment",                 "Couples are choosing intimate ceremonies with fewer than 20 guests over big parties."),
+            ("🗽 U.S. News",        "City council approves new public transit expansion",  "The plan adds three new bus rapid transit lines across downtown."),
+            ("💡 Impact",           "Volunteers rebuild homes after historic flooding",    "A grassroots nonprofit mobilized hundreds of workers within days of the disaster."),
+            ("🌿 Environment",      "Coral reefs show signs of recovery in protected zones","Marine biologists report the healthiest reef growth in over a decade at monitored sites."),
+            ("🔬 Science & Tech",   "NASA discovers water on Mars",                        "Scientists confirm liquid water beneath the Martian south polar ice cap."),
+            ("📚 Education",        "Schools pilot four-day week to combat teacher burnout","Early results show improved morale, though some parents worry about childcare gaps."),
         ]
-        for col, (lbl, h, d) in zip(ex_cols, examples):
-            col.button(lbl, use_container_width=True, on_click=_fill_example, args=(h, d))
+        for i in range(0, len(examples), 4):
+            row_cols = st.columns(4)
+            for col, (lbl, h, d) in zip(row_cols, examples[i:i+4]):
+                col.button(lbl, use_container_width=True, on_click=_fill_example, args=(h, d))
 
         st.markdown("---")
         if st.button("🔍 Classify with Both Models", type="primary"):
