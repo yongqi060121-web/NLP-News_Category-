@@ -323,6 +323,11 @@ with tab_predict:
                                     placeholder="Brief summary of the article…")
 
         st.markdown("###### Quick examples")
+
+        def _fill_example(h, d):
+            st.session_state.headline_input = h
+            st.session_state.desc_input     = d
+
         ex_cols  = st.columns(4)
         examples = [
             ("💼 Business",     "Markets rally as inflation cools",   "Stocks surged after CPI data came in below expectations."),
@@ -331,10 +336,7 @@ with tab_predict:
             ("🎬 Entertainment","Oscars 2024: Best Picture winner",    "Oppenheimer swept the Oscars taking home seven awards."),
         ]
         for col, (lbl, h, d) in zip(ex_cols, examples):
-            if col.button(lbl, use_container_width=True):
-                st.session_state.headline_input = h
-                st.session_state.desc_input     = d
-                st.rerun()
+            col.button(lbl, use_container_width=True, on_click=_fill_example, args=(h, d))
 
         st.markdown("---")
         if st.button("🔍 Classify with Both Models", type="primary"):
