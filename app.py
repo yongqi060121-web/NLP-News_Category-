@@ -371,6 +371,15 @@ with tab_predict:
                 # ── Side-by-side prediction boxes ──
                 left, right = st.columns(2, gap="large")
 
+                def _top_and_other(probs, top_n=5):
+                    """Split a {category: probability} dict into the top-N items
+                    (always highest-first, so the predicted class is included)
+                    plus a combined 'Other' bucket for everything else."""
+                    ordered = sorted(probs.items(), key=lambda x: x[1], reverse=True)
+                    top, rest = ordered[:top_n], ordered[top_n:]
+                    other_pct = sum(v for _, v in rest)
+                    return top, rest, other_pct
+
                 with left:
                     if svm_pred:
                         icon = CATEGORY_ICONS.get(svm_pred, "📰")
@@ -382,13 +391,14 @@ with tab_predict:
                         <div class="pred-conf">Confidence: {conf:.1%}</div>
                         </div>""", unsafe_allow_html=True)
 
-                        top5_svm = sorted(svm_probs.items(), key=lambda x:x[1], reverse=True)[:8]
+                        top_svm, rest_svm, other_svm = _top_and_other(svm_probs)
+                        chart_svm = top_svm + ([("Other", other_svm)] if rest_svm else [])
                         fig = go.Figure(go.Bar(
-                            x=[v for _,v in top5_svm],
-                            y=[f"{CATEGORY_ICONS.get(c,'📰')} {c}" for c,_ in top5_svm],
+                            x=[v for _,v in chart_svm],
+                            y=[f"{CATEGORY_ICONS.get(c,'➕')} {c}" for c,_ in chart_svm],
                             orientation="h",
-                            marker_color=["#2196f3" if c==svm_pred else "#2a3040" for c,_ in top5_svm],
-                            text=[f"{v:.1%}" for _,v in top5_svm],
+                            marker_color=["#2196f3" if c==svm_pred else "#2a3040" for c,_ in chart_svm],
+                            text=[f"{v:.1%}" for _,v in chart_svm],
                             textposition="outside", textfont=dict(color="#c5cdd8", size=11),
                         ))
                         fig.update_layout(
@@ -399,6 +409,11 @@ with tab_predict:
                             margin=dict(l=0,r=70,t=10,b=10), height=300,
                         )
                         st.plotly_chart(fig, use_container_width=True)
+
+                        if rest_svm:
+                            with st.expander(f"📋 See all {len(rest_svm)} categories inside \"Other\" ({other_svm:.1%})"):
+                                for c, v in rest_svm:
+                                    st.markdown(f"{CATEGORY_ICONS.get(c,'📰')} **{c}** — {v:.1%}")
                     else:
                         st.warning("SVM model not loaded.")
 
@@ -413,13 +428,14 @@ with tab_predict:
                         <div class="pred-conf">Probability: {conf:.1%}</div>
                         </div>""", unsafe_allow_html=True)
 
-                        top5_bow = sorted(bow_probs.items(), key=lambda x:x[1], reverse=True)[:8]
+                        top_bow, rest_bow, other_bow = _top_and_other(bow_probs)
+                        chart_bow = top_bow + ([("Other", other_bow)] if rest_bow else [])
                         fig2 = go.Figure(go.Bar(
-                            x=[v for _,v in top5_bow],
-                            y=[f"{CATEGORY_ICONS.get(c,'📰')} {c}" for c,_ in top5_bow],
+                            x=[v for _,v in chart_bow],
+                            y=[f"{CATEGORY_ICONS.get(c,'➕')} {c}" for c,_ in chart_bow],
                             orientation="h",
-                            marker_color=["#f39c12" if c==bow_pred else "#2a3040" for c,_ in top5_bow],
-                            text=[f"{v:.1%}" for _,v in top5_bow],
+                            marker_color=["#f39c12" if c==bow_pred else "#2a3040" for c,_ in chart_bow],
+                            text=[f"{v:.1%}" for _,v in chart_bow],
                             textposition="outside", textfont=dict(color="#c5cdd8", size=11),
                         ))
                         fig2.update_layout(
@@ -430,6 +446,11 @@ with tab_predict:
                             margin=dict(l=0,r=70,t=10,b=10), height=300,
                         )
                         st.plotly_chart(fig2, use_container_width=True)
+
+                        if rest_bow:
+                            with st.expander(f"📋 See all {len(rest_bow)} categories inside \"Other\" ({other_bow:.1%})"):
+                                for c, v in rest_bow:
+                                    st.markdown(f"{CATEGORY_ICONS.get(c,'📰')} **{c}** — {v:.1%}")
 
                         # BoW top words
                         st.markdown("**🔤 Top words detected (BoW)**")
