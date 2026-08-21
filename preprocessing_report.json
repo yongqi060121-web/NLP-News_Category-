@@ -1,0 +1,30 @@
+{
+  "raw_articles": 94288,
+  "after_category_merge": 93658,
+  "after_text_cleaning": 93655,
+  "num_classes": 19,
+  "train_size": 74924,
+  "test_size": 18731,
+  "test_split_fraction": 0.2,
+  "class_distribution": {
+    "POLITICS": 16020,
+    "WELLNESS": 11087,
+    "ENTERTAINMENT": 9578,
+    "VOICES": 7033,
+    "PARENTING": 5736,
+    "STYLE & BEAUTY": 5430,
+    "U.S. NEWS": 4798,
+    "TRAVEL": 4455,
+    "WORLD NEWS": 4295,
+    "FOOD & DRINK": 3796,
+    "BUSINESS": 3485,
+    "IMPACT": 3357,
+    "WEDDINGS & DIVORCE": 3186,
+    "COMEDY": 2430,
+    "SPORTS": 2285,
+    "HOME & LIVING": 1944,
+    "SCIENCE & TECH": 1940,
+    "ENVIRONMENT": 1829,
+    "EDUCATION": 971
+  }
+}
