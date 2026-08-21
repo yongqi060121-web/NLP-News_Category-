@@ -118,6 +118,7 @@ CATEGORY_ICONS = {
 for key, val in [
     ("svm_pipeline", None), ("svm_labels", None), ("svm_results", None),
     ("bow_pipeline", None), ("bow_labels", None), ("bow_results", None),
+    ("headline_input", ""), ("desc_input", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = val
@@ -315,9 +316,10 @@ with tab_predict:
         st.markdown("#### Enter a news article")
         c1, c2 = st.columns([1,1], gap="large")
         with c1:
-            headline = st.text_input("Headline", placeholder="e.g. Senate passes new climate bill…")
+            headline = st.text_input("Headline", key="headline_input",
+                                      placeholder="e.g. Senate passes new climate bill…")
         with c2:
-            description = st.text_area("Short Description (optional)", height=95,
+            description = st.text_area("Short Description (optional)", key="desc_input", height=95,
                                     placeholder="Brief summary of the article…")
 
         st.markdown("###### Quick examples")
@@ -330,8 +332,9 @@ with tab_predict:
         ]
         for col, (lbl, h, d) in zip(ex_cols, examples):
             if col.button(lbl, use_container_width=True):
-                headline    = h
-                description = d
+                st.session_state.headline_input = h
+                st.session_state.desc_input     = d
+                st.rerun()
 
         st.markdown("---")
         if st.button("🔍 Classify with Both Models", type="primary"):
