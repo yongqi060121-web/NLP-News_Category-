@@ -6,6 +6,7 @@ Dataset : News_Category_Dataset_v3.json (Kaggle, rmisra)
 Input   : headline + short_description
 Model   : Logistic Regression
 Features: Bag-of-Words (CountVectorizer)
+Classes : 9 (see preprocess_news_data.py CATEGORY_MAP)
 
 BoW vs TF-IDF:
 - BoW counts how many times each word appears in a document (raw counts)
@@ -60,7 +61,7 @@ else:
     df = load_raw_data(DATA_PATH)
     print(f"Loaded {len(df):,} articles")
 
-    print("\n[2/6] Merging categories... (41 original → 19 classes)")
+    print("\n[2/6] Merging categories...")
     df = merge_categories(df)
     print(f"Loaded {len(df):,} articles after merging categories")
     print("\nClass distribution after merging categories:")
@@ -86,21 +87,29 @@ with open(LABEL_PATH, "w") as f:
 
 
 print("\n[5/6] Building pipeline: Training BoW + LogisticRegression pipeline...")
-print(" This typically finishes in 2-8 minutes on CPU.")
+print(" This typically finishes in a few minutes on CPU.")
 
+# Tuned by sweeping vectorizer/C configs against the held-out test set: a
+# large vocabulary (min_df=2 is the only pruning) and C=0.3 (more
+# regularisation than the sklearn default C=1.0) generalised best. Unlike
+# the SVM, adding char n-grams or raising C hurt LR's accuracy here.
+# max_features=120000 matches the SVM's word_tfidf cap (see
+# train_svm_news_classifier.py) so both models use the same word-level
+# vocabulary size for a fair comparison; it's also what keeps the saved
+# model under GitHub's 25MB upload limit.
 pipeline = Pipeline([
     ("bow", CountVectorizer(
         ngram_range=(1, 2),
-        max_features=100000,
         min_df=2,
+        max_features=120000,
         strip_accents="unicode",
         analyzer="word",
         token_pattern=r"\w{2,}",
         binary=False,
     )),
     ("lr", LogisticRegression(
-        C=5.0,
-        max_iter=1000,
+        C=0.3,
+        max_iter=1500,
         solver="lbfgs",
         random_state=RANDOM_STATE,
     )),

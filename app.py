@@ -5,7 +5,7 @@ Models:
   1. SVM + TF-IDF       (LinearSVC + TfidfVectorizer)
   2. LR  + Bag-of-Words (LogisticRegression + CountVectorizer)
 
-Run with:  streamlit run app_combined.py
+Run with:  streamlit run app.py
 Requires:  pip install streamlit plotly pandas scikit-learn numpy joblib
 """
 
@@ -81,36 +81,39 @@ BOW_MODEL    = "./lr_bow_news_classifier.joblib"
 BOW_LABELS   = "./lr_bow_label_mapping.json"
 BOW_RESULTS  = "./lr_bow_training_results.json"
 
-DEFAULT_DATA = "preprocessed_news_data.csv"  # faster/smaller than the raw .json
+DEFAULT_DATA = "News_Category_Dataset_v3.json"
 RANDOM_STATE = 42
 
 CATEGORY_MAP = {
-    "POLITICS":"POLITICS","WELLNESS":"WELLNESS","HEALTHY LIVING":"WELLNESS",
+    "POLITICS":"POLITICS & NEWS","WELLNESS":"WELLNESS","HEALTHY LIVING":"WELLNESS",
     "ENTERTAINMENT":"ENTERTAINMENT","ARTS":"ENTERTAINMENT",
     "ARTS & CULTURE":"ENTERTAINMENT","CULTURE & ARTS":"ENTERTAINMENT",
     "TRAVEL":"TRAVEL","STYLE & BEAUTY":"STYLE & BEAUTY","STYLE":"STYLE & BEAUTY",
-    "PARENTING":"PARENTING","PARENTS":"PARENTING",
-    "QUEER VOICES":"VOICES","BLACK VOICES":"VOICES","WOMEN":"VOICES","LATINO VOICES":"VOICES",
+    "PARENTING":"WELLNESS","PARENTS":"WELLNESS",
+    "QUEER VOICES":None,"BLACK VOICES":None,"WOMEN":None,"LATINO VOICES":None,
     "FOOD & DRINK":"FOOD & DRINK","TASTE":"FOOD & DRINK",
-    "BUSINESS":"BUSINESS","MONEY":"BUSINESS","COMEDY":"COMEDY","SPORTS":"SPORTS",
+    "BUSINESS":"POLITICS & NEWS","MONEY":"POLITICS & NEWS","COMEDY":"ENTERTAINMENT","SPORTS":"SPORTS",
     "HOME & LIVING":"HOME & LIVING",
-    "THE WORLDPOST":"WORLD NEWS","WORLDPOST":"WORLD NEWS","WORLD NEWS":"WORLD NEWS",
+    "THE WORLDPOST":"POLITICS & NEWS","WORLDPOST":"POLITICS & NEWS","WORLD NEWS":"POLITICS & NEWS",
     "WEDDINGS":"WEDDINGS & DIVORCE","DIVORCE":"WEDDINGS & DIVORCE",
-    "CRIME":"U.S. NEWS","MEDIA":"U.S. NEWS","U.S. NEWS":"U.S. NEWS","WEIRD NEWS":"U.S. NEWS",
-    "IMPACT":"IMPACT","GOOD NEWS":"IMPACT","RELIGION":"IMPACT",
-    "GREEN":"ENVIRONMENT","ENVIRONMENT":"ENVIRONMENT",
-    "SCIENCE":"SCIENCE & TECH","TECH":"SCIENCE & TECH",
-    "COLLEGE":"EDUCATION","EDUCATION":"EDUCATION","FIFTY":None,
+    "CRIME":"POLITICS & NEWS","MEDIA":"POLITICS & NEWS","U.S. NEWS":"POLITICS & NEWS","WEIRD NEWS":"POLITICS & NEWS",
+    "IMPACT":None,"GOOD NEWS":None,"RELIGION":None,
+    "GREEN":"POLITICS & NEWS","ENVIRONMENT":"POLITICS & NEWS",
+    "SCIENCE":"WELLNESS","TECH":"WELLNESS",
+    "COLLEGE":"WELLNESS","EDUCATION":"WELLNESS","FIFTY":None,
 }
 
 CATEGORY_ICONS = {
-    "POLITICS":"🏛️","WELLNESS":"🧘","ENTERTAINMENT":"🎬","TRAVEL":"✈️",
-    "STYLE & BEAUTY":"💄","PARENTING":"👶","VOICES":"🗣️","FOOD & DRINK":"🍽️",
-    "BUSINESS":"💼","COMEDY":"😄","SPORTS":"⚽","HOME & LIVING":"🏠",
-    "WORLD NEWS":"🌍","WEDDINGS & DIVORCE":"💍","U.S. NEWS":"🗽",
-    "IMPACT":"💡","ENVIRONMENT":"🌿","SCIENCE & TECH":"🔬","EDUCATION":"📚",
+    "POLITICS & NEWS":"📰","WELLNESS":"🧘","ENTERTAINMENT":"🎬","TRAVEL":"✈️",
+    "STYLE & BEAUTY":"💄","FOOD & DRINK":"🍽️","SPORTS":"⚽",
+    "HOME & LIVING":"🏠","WEDDINGS & DIVORCE":"💍",
 }
 
+# ─────────────────────────────────────────────────────────────────
+# Global variables for training threads
+# ─────────────────────────────────────────────────────────────────
+_svm_log, _svm_running, _svm_done, _svm_results = [], False, False, None
+_bow_log, _bow_running, _bow_done, _bow_results = [], False, False, None
 
 # ─────────────────────────────────────────────────────────────────
 # Session state
@@ -118,7 +121,6 @@ CATEGORY_ICONS = {
 for key, val in [
     ("svm_pipeline", None), ("svm_labels", None), ("svm_results", None),
     ("bow_pipeline", None), ("bow_labels", None), ("bow_results", None),
-    ("headline_input", ""), ("desc_input", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = val
@@ -177,44 +179,9 @@ def get_top_bow_words(headline, description, top_n=8):
 # Training functions
 # ─────────────────────────────────────────────────────────────────
 def _common_load(data_path):
-    """Shared data loading and preprocessing.
-
-    Supports two input types, chosen by file extension:
-      - raw News_Category_Dataset_v3.json (newline-delimited JSON) -> full
-        pipeline: merge categories, build+clean text, encode labels, split.
-      - preprocessed_news_data.csv (columns: text, merged_category, label,
-        split) -> skips straight to training. This is the smaller, faster
-        option since the cleaning + stratified split are already baked in.
-    """
+    """Shared data loading and preprocessing."""
     from sklearn.model_selection import train_test_split
     from sklearn.preprocessing import LabelEncoder
-
-    if data_path.lower().endswith(".csv"):
-        df = pd.read_csv(data_path)
-        required = {"text", "merged_category", "label", "split"}
-        missing = required - set(df.columns)
-        if missing:
-            raise ValueError(
-                f"'{data_path}' is missing expected column(s): {sorted(missing)}. "
-                "Expected a CSV produced by preprocess_news_data.py."
-            )
-
-        label_map = (
-            df[["label", "merged_category"]]
-            .drop_duplicates()
-            .set_index("label")["merged_category"]
-            .to_dict()
-        )
-        label_map   = {str(k): v for k, v in sorted(label_map.items())}
-        label_names = [label_map[str(i)] for i in range(len(label_map))]
-
-        train_x = df.loc[df["split"] == "train", "text"].tolist()
-        test_x  = df.loc[df["split"] == "test",  "text"].tolist()
-        train_y = df.loc[df["split"] == "train", "label"].tolist()
-        test_y  = df.loc[df["split"] == "test",  "label"].tolist()
-        return train_x, test_x, train_y, test_y, label_names, label_map
-
-    # ---- raw JSON path (original behavior, unchanged) ----
     df = pd.read_json(data_path, lines=True)
     df = df[["headline","short_description","category"]].dropna(subset=["headline","category"])
     df["merged_category"] = df["category"].map(CATEGORY_MAP)
@@ -233,6 +200,95 @@ def _common_load(data_path):
     )
     return train_x, test_x, train_y, test_y, label_names, label_map
 
+
+def train_svm_thread(data_path, c_val, max_feat, ngram_max):
+    global _svm_log, _svm_running, _svm_done, _svm_results
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.svm import LinearSVC
+    from sklearn.pipeline import Pipeline
+    from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
+
+    def log(m): _svm_log.append(m)
+    try:
+        log("📂 Loading and preprocessing dataset...")
+        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(data_path)
+        log(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
+        log(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
+
+        log(f"⚙️  Building TF-IDF + LinearSVC  (C={c_val}, features={max_feat:,}, ngram=1-{ngram_max})")
+        pipe = Pipeline([
+            ("tfidf", TfidfVectorizer(ngram_range=(1,ngram_max), max_features=max_feat,
+                                      sublinear_tf=True, min_df=2,
+                                      strip_accents="unicode", token_pattern=r"\w{2,}")),
+            ("svm",  LinearSVC(C=c_val, max_iter=2000, random_state=RANDOM_STATE)),
+        ])
+        log("🚀 Training SVM... (1–5 minutes)")
+        pipe.fit(train_x, train_y)
+        log("✅ Training complete!")
+
+        preds = pipe.predict(test_x)
+        acc   = accuracy_score(test_y, preds)
+        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
+        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
+        log(f"📈 Accuracy:{acc:.4f}  F1:{f1:.4f}  Precision:{p:.4f}  Recall:{r:.4f}")
+
+        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
+        with open(SVM_RESULTS,"w") as f: json.dump(results, f, indent=2)
+        joblib.dump(pipe, SVM_MODEL)
+        with open(SVM_LABELS,"w") as f: json.dump(label_map, f, indent=2)
+        _svm_results = results
+        _svm_done    = True
+        log("🎉 SVM model saved! Click 'Load SVM Model'.")
+    except Exception as e:
+        import traceback; log(f"❌ {e}"); log(traceback.format_exc())
+    finally:
+        _svm_running = False
+
+
+def train_bow_thread(data_path, c_val, max_feat, ngram_max, binary):
+    global _bow_log, _bow_running, _bow_done, _bow_results
+    from sklearn.feature_extraction.text import CountVectorizer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
+
+    def log(m): _bow_log.append(m)
+    try:
+        log("📂 Loading and preprocessing dataset...")
+        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(data_path)
+        log(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
+        log(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
+
+        mode = "binary" if binary else "counts"
+        log(f"⚙️  Building BoW + Logistic Regression  (C={c_val}, features={max_feat:,}, ngram=1-{ngram_max}, mode={mode})")
+        pipe = Pipeline([
+            ("bow", CountVectorizer(ngram_range=(1,ngram_max), max_features=max_feat,
+                                    min_df=2, strip_accents="unicode",
+                                    token_pattern=r"\w{2,}", binary=binary)),
+            ("lr",  LogisticRegression(C=c_val, max_iter=1000, solver="lbfgs",
+                                    random_state=RANDOM_STATE)),
+        ])
+        log("🚀 Training Logistic Regression... (2–8 minutes)")
+        pipe.fit(train_x, train_y)
+        log("✅ Training complete!")
+
+        preds = pipe.predict(test_x)
+        acc   = accuracy_score(test_y, preds)
+        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
+        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
+        log(f"📈 Accuracy:{acc:.4f}  F1:{f1:.4f}  Precision:{p:.4f}  Recall:{r:.4f}")
+
+        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
+        with open(BOW_RESULTS,"w") as f: json.dump(results, f, indent=2)
+        joblib.dump(pipe, BOW_MODEL)
+        with open(BOW_LABELS,"w") as f: json.dump(label_map, f, indent=2)
+        _bow_results = results
+        _bow_done    = True
+        log("🎉 BoW model saved! Click 'Load BoW Model'.")
+    except Exception as e:
+        import traceback; log(f"❌ {e}"); log(traceback.format_exc())
+    finally:
+        _bow_running = False
 
 # ─────────────────────────────────────────────────────────────────
 # Auto-load models if saved on disk
@@ -266,7 +322,7 @@ st.markdown("""
 <p>
     <span class="svm-tag">SVM · TF-IDF</span>&nbsp;
     <span class="bow-tag">Logistic Regression · Bag-of-Words</span>
-    &nbsp;· 19 categories · HuffPost News Dataset
+    &nbsp;· 9 categories · HuffPost News Dataset
 </p>
 </div>
 """, unsafe_allow_html=True)
@@ -294,7 +350,7 @@ with st.sidebar:
         st.markdown('<span class="pill-red">✘ Not trained</span>', unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown("### 📋 19 Categories")
+    st.markdown("### 📋 9 Categories")
     for cat, icon in CATEGORY_ICONS.items():
         st.markdown(f"<small>{icon} {cat}</small>", unsafe_allow_html=True)
 
@@ -314,45 +370,39 @@ with tab_predict:
         st.info("⚠️ No models loaded yet. Go to the **Train** tab to train both models first.")
     else:
         st.markdown("#### Enter a news article")
+        if "headline_input" not in st.session_state:
+            st.session_state.headline_input = ""
+        if "description_input" not in st.session_state:
+            st.session_state.description_input = ""
+
         c1, c2 = st.columns([1,1], gap="large")
         with c1:
-            headline = st.text_input("Headline", key="headline_input",
-                                      placeholder="e.g. Senate passes new climate bill…")
+            headline = st.text_input("Headline", key="headline_input", placeholder="e.g. Senate passes new climate bill…")
         with c2:
-            description = st.text_area("Short Description (optional)", key="desc_input", height=95,
+            description = st.text_area("Short Description (optional)", key="description_input", height=95,
                                     placeholder="Brief summary of the article…")
 
         st.markdown("###### Quick examples")
-
+        examples = [
+            ("📰 Politics & News",    "President signs new infrastructure spending bill", "The $1.2 trillion package will fund roads, bridges and broadband nationwide."),
+            ("🧘 Wellness",           "Study finds daily walking cuts heart disease risk by 30%", "Researchers tracked 10,000 adults over five years."),
+            ("🎬 Entertainment",      "Oscars 2024: Best Picture winner", "Oppenheimer swept the Oscars taking home seven awards."),
+            ("✈️ Travel",             "Top 10 hidden gem destinations for 2024", "These under-the-radar spots offer stunning views without the crowds."),
+            ("💄 Style & Beauty",     "Fall fashion week highlights bold colors and oversized silhouettes", "Designers embraced maximalism on the runway this season."),
+            ("🍽️ Food & Drink",       "This 20-minute pasta recipe is going viral", "Home cooks are raving about the creamy garlic sauce."),
+            ("⚽ Sports",             "World Cup Final: Argentina wins", "Argentina beat France on penalties in a thrilling final."),
+            ("🏠 Home & Living",      "Small space, big style: 5 tips for tiny apartments", "Designers share their favorite tricks for maximizing square footage."),
+            ("💍 Weddings & Divorce", "Celebrity couple announces surprise wedding", "The intimate ceremony took place at a private estate."),
+        ]
         def _fill_example(h, d):
             st.session_state.headline_input = h
-            st.session_state.desc_input     = d
+            st.session_state.description_input = d
 
-        examples = [
-            ("🏛️ Politics",        "Senate passes bipartisan infrastructure bill",        "Lawmakers from both parties reached a compromise on funding for roads and bridges."),
-            ("🧘 Wellness",         "New study links meditation to lower stress levels",   "Researchers found a 20-minute daily practice significantly reduced cortisol in participants."),
-            ("🎬 Entertainment",    "Oscars 2024: Best Picture winner",                    "Oppenheimer swept the Oscars taking home seven awards."),
-            ("✈️ Travel",           "Hidden gem: this coastal town is 2024's top pick",    "Travelers are flocking to this quiet fishing village for its beaches and low prices."),
-            ("💄 Style & Beauty",   "Fall's biggest fashion trend revealed",               "Designers are embracing bold colors and oversized silhouettes this season."),
-            ("👶 Parenting",        "Pediatricians rethink advice on toddler screen time", "New guidelines suggest quality of content matters more than strict time limits."),
-            ("🗣️ Voices",          "Why representation in media still matters",           "A personal essay on growing up without seeing yourself reflected on screen."),
-            ("🍽️ Food & Drink",    "The rise of plant-based comfort food",                "Restaurants are reinventing classic dishes with vegan twists that win over skeptics."),
-            ("💼 Business",         "Markets rally as inflation cools",                    "Stocks surged after CPI data came in below expectations."),
-            ("😄 Comedy",           "Late-night host's monologue goes viral",              "The bit about airline food somehow found a way to feel fresh again."),
-            ("⚽ Sports",           "World Cup Final: Argentina wins",                     "Argentina beat France on penalties in a thrilling final."),
-            ("🏠 Home & Living",    "Small-space living: 10 tips to maximize an apartment","Interior designers share their favorite tricks for making tiny rooms feel bigger."),
-            ("🌍 World News",       "Global leaders meet to discuss climate funding",      "Delegates from over 100 countries convened to negotiate a new aid package."),
-            ("💍 Weddings & Divorce","Micro-weddings are having a moment",                 "Couples are choosing intimate ceremonies with fewer than 20 guests over big parties."),
-            ("🗽 U.S. News",        "City council approves new public transit expansion",  "The plan adds three new bus rapid transit lines across downtown."),
-            ("💡 Impact",           "Volunteers rebuild homes after historic flooding",    "A grassroots nonprofit mobilized hundreds of workers within days of the disaster."),
-            ("🌿 Environment",      "Coral reefs show signs of recovery in protected zones","Marine biologists report the healthiest reef growth in over a decade at monitored sites."),
-            ("🔬 Science & Tech",   "NASA discovers water on Mars",                        "Scientists confirm liquid water beneath the Martian south polar ice cap."),
-            ("📚 Education",        "Schools pilot four-day week to combat teacher burnout","Early results show improved morale, though some parents worry about childcare gaps."),
-        ]
-        for i in range(0, len(examples), 4):
-            row_cols = st.columns(4)
-            for col, (lbl, h, d) in zip(row_cols, examples[i:i+4]):
-                col.button(lbl, use_container_width=True, on_click=_fill_example, args=(h, d))
+        for row_start in range(0, len(examples), 3):
+            ex_cols = st.columns(3)
+            for i, (col, (lbl, h, d)) in enumerate(zip(ex_cols, examples[row_start:row_start + 3])):
+                col.button(lbl, use_container_width=True, key=f"example_{row_start + i}",
+                           on_click=_fill_example, args=(h, d))
 
         st.markdown("---")
         if st.button("🔍 Classify with Both Models", type="primary"):
@@ -371,30 +421,6 @@ with tab_predict:
                 # ── Side-by-side prediction boxes ──
                 left, right = st.columns(2, gap="large")
 
-                def _top_and_other(probs, top_n=5):
-                    """Split a {category: probability} dict into the top-N items
-                    (always highest-first, so the predicted class is included)
-                    plus a combined 'Other' bucket for everything else."""
-                    ordered = sorted(probs.items(), key=lambda x: x[1], reverse=True)
-                    top, rest = ordered[:top_n], ordered[top_n:]
-                    other_pct = sum(v for _, v in rest)
-                    return top, rest, other_pct
-
-                def _hover_texts(chart_items, rest):
-                    """Per-bar hover text: normal bars just show their own
-                    percentage; the 'Other' bar shows every folded-in category
-                    and its percentage, one per line."""
-                    texts = []
-                    for c, v in chart_items:
-                        if c == "Other" and rest:
-                            lines = "<br>".join(
-                                f"{CATEGORY_ICONS.get(rc,'📰')} {rc}: {rv:.1%}" for rc, rv in rest
-                            )
-                            texts.append(f"<b>Other — {v:.1%} total</b><br>{lines}")
-                        else:
-                            texts.append(f"{CATEGORY_ICONS.get(c,'📰')} {c}: {v:.1%}")
-                    return texts
-
                 with left:
                     if svm_pred:
                         icon = CATEGORY_ICONS.get(svm_pred, "📰")
@@ -406,17 +432,14 @@ with tab_predict:
                         <div class="pred-conf">Confidence: {conf:.1%}</div>
                         </div>""", unsafe_allow_html=True)
 
-                        top_svm, rest_svm, other_svm = _top_and_other(svm_probs)
-                        chart_svm = top_svm + ([("Other", other_svm)] if rest_svm else [])
+                        top5_svm = sorted(svm_probs.items(), key=lambda x:x[1], reverse=True)[:8]
                         fig = go.Figure(go.Bar(
-                            x=[v for _,v in chart_svm],
-                            y=[f"{CATEGORY_ICONS.get(c,'➕')} {c}" for c,_ in chart_svm],
+                            x=[v for _,v in top5_svm],
+                            y=[f"{CATEGORY_ICONS.get(c,'📰')} {c}" for c,_ in top5_svm],
                             orientation="h",
-                            marker_color=["#2196f3" if c==svm_pred else "#2a3040" for c,_ in chart_svm],
-                            text=[f"{v:.1%}" for _,v in chart_svm],
+                            marker_color=["#2196f3" if c==svm_pred else "#2a3040" for c,_ in top5_svm],
+                            text=[f"{v:.1%}" for _,v in top5_svm],
                             textposition="outside", textfont=dict(color="#c5cdd8", size=11),
-                            hovertext=_hover_texts(chart_svm, rest_svm),
-                            hovertemplate="%{hovertext}<extra></extra>",
                         ))
                         fig.update_layout(
                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -424,14 +447,8 @@ with tab_predict:
                             xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
                             yaxis=dict(autorange="reversed", showgrid=False),
                             margin=dict(l=0,r=70,t=10,b=10), height=300,
-                            hoverlabel=dict(bgcolor="#1a1f2e", font_size=12, font_family="Inter", align="left"),
                         )
                         st.plotly_chart(fig, use_container_width=True)
-
-                        if rest_svm:
-                            with st.expander(f"📋 See all {len(rest_svm)} categories inside \"Other\" ({other_svm:.1%})"):
-                                for c, v in rest_svm:
-                                    st.markdown(f"{CATEGORY_ICONS.get(c,'📰')} **{c}** — {v:.1%}")
                     else:
                         st.warning("SVM model not loaded.")
 
@@ -446,17 +463,14 @@ with tab_predict:
                         <div class="pred-conf">Probability: {conf:.1%}</div>
                         </div>""", unsafe_allow_html=True)
 
-                        top_bow, rest_bow, other_bow = _top_and_other(bow_probs)
-                        chart_bow = top_bow + ([("Other", other_bow)] if rest_bow else [])
+                        top5_bow = sorted(bow_probs.items(), key=lambda x:x[1], reverse=True)[:8]
                         fig2 = go.Figure(go.Bar(
-                            x=[v for _,v in chart_bow],
-                            y=[f"{CATEGORY_ICONS.get(c,'➕')} {c}" for c,_ in chart_bow],
+                            x=[v for _,v in top5_bow],
+                            y=[f"{CATEGORY_ICONS.get(c,'📰')} {c}" for c,_ in top5_bow],
                             orientation="h",
-                            marker_color=["#f39c12" if c==bow_pred else "#2a3040" for c,_ in chart_bow],
-                            text=[f"{v:.1%}" for _,v in chart_bow],
+                            marker_color=["#f39c12" if c==bow_pred else "#2a3040" for c,_ in top5_bow],
+                            text=[f"{v:.1%}" for _,v in top5_bow],
                             textposition="outside", textfont=dict(color="#c5cdd8", size=11),
-                            hovertext=_hover_texts(chart_bow, rest_bow),
-                            hovertemplate="%{hovertext}<extra></extra>",
                         ))
                         fig2.update_layout(
                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -464,14 +478,8 @@ with tab_predict:
                             xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
                             yaxis=dict(autorange="reversed", showgrid=False),
                             margin=dict(l=0,r=70,t=10,b=10), height=300,
-                            hoverlabel=dict(bgcolor="#1a1f2e", font_size=12, font_family="Inter", align="left"),
                         )
                         st.plotly_chart(fig2, use_container_width=True)
-
-                        if rest_bow:
-                            with st.expander(f"📋 See all {len(rest_bow)} categories inside \"Other\" ({other_bow:.1%})"):
-                                for c, v in rest_bow:
-                                    st.markdown(f"{CATEGORY_ICONS.get(c,'📰')} **{c}** — {v:.1%}")
 
                         # BoW top words
                         st.markdown("**🔤 Top words detected (BoW)**")
@@ -513,65 +521,37 @@ with tab_train:
         sc1, sc2 = st.columns(2)
         with sc1:
             svm_data   = st.text_input("Dataset path (SVM)", value=DEFAULT_DATA, key="svm_data")
-            svm_c      = st.select_slider("C value", options=[0.01,0.1,0.5,1.0,2.0,5.0,10.0], value=1.0, key="svm_c")
+            svm_c      = st.select_slider("C value", options=[0.01,0.1,0.3,0.5,1.0,2.0,5.0,10.0], value=0.3, key="svm_c")
         with sc2:
             svm_feat   = st.select_slider("Max TF-IDF features", options=[10000,50000,100000,200000], value=100000, key="svm_feat")
             svm_ngram  = st.radio("N-gram range", [1,2], index=1, horizontal=True, key="svm_ngram")
 
-        if st.button("🚀 Train SVM", type="primary", key="svm_train_btn"):
-            if not os.path.exists(svm_data):
-                st.error(f"Dataset not found: {svm_data}")
-            else:
-                from sklearn.feature_extraction.text import TfidfVectorizer
-                from sklearn.svm import LinearSVC
-                from sklearn.pipeline import Pipeline
-                from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
+        if _svm_running:
+            st.button("⏳ SVM training…", disabled=True, use_container_width=True, key="svm_btn_dis")
+        else:
+            if st.button("🚀 Train SVM", type="primary", key="svm_train_btn"):
+                if not os.path.exists(svm_data):
+                    st.error(f"Dataset not found: {svm_data}")
+                else:
+                    _svm_log, _svm_done, _svm_running, _svm_results = [], False, True, None
+                    threading.Thread(target=train_svm_thread,
+                                    args=(svm_data, svm_c, svm_feat, svm_ngram),
+                                    daemon=True).start()
+                    st.rerun()
 
-                with st.status("Training SVM + TF-IDF...", expanded=True) as status:
-                    try:
-                        st.write("📂 Loading and preprocessing dataset...")
-                        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(svm_data)
-                        st.write(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
-                        st.write(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
-
-                        st.write(f"⚙️ Building TF-IDF + LinearSVC  (C={svm_c}, features={svm_feat:,}, ngram=1-{svm_ngram})")
-                        pipe = Pipeline([
-                            ("tfidf", TfidfVectorizer(ngram_range=(1,svm_ngram), max_features=svm_feat,
-                                                      sublinear_tf=True, min_df=2,
-                                                      strip_accents="unicode", token_pattern=r"\w{2,}")),
-                            ("svm",  LinearSVC(C=svm_c, max_iter=2000, random_state=RANDOM_STATE)),
-                        ])
-                        st.write("🚀 Training SVM... (this can take a few minutes)")
-                        pipe.fit(train_x, train_y)
-                        st.write("✅ Training complete!")
-
-                        preds = pipe.predict(test_x)
-                        acc   = accuracy_score(test_y, preds)
-                        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
-                        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
-                        st.write(f"📈 Accuracy: {acc:.4f}  F1: {f1:.4f}  Precision: {p:.4f}  Recall: {r:.4f}")
-
-                        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
-                        with open(SVM_RESULTS,"w") as f: json.dump(results, f, indent=2)
-                        joblib.dump(pipe, SVM_MODEL)
-                        with open(SVM_LABELS,"w") as f: json.dump(label_map, f, indent=2)
-                        st.session_state.svm_results = results
-                        st.write("🎉 SVM model saved!")
-
-                        status.update(label="✅ SVM training complete!", state="complete", expanded=False)
-                    except Exception as e:
-                        import traceback
-                        st.write(f"❌ {e}")
-                        st.code(traceback.format_exc())
-                        status.update(label="❌ SVM training failed", state="error", expanded=True)
-
-        if st.session_state.get("svm_results") is not None:
-            if st.button("📂 Load SVM Model", key="load_svm"):
-                load_svm.clear()
-                p,lm = load_svm()
-                st.session_state.svm_pipeline = p
-                st.session_state.svm_labels   = lm
-                st.rerun()
+        if _svm_log:
+            st.markdown("<div class='log-box'>"+"<br>".join(_svm_log)+"</div>", unsafe_allow_html=True)
+            if _svm_running:
+                time.sleep(2); st.rerun()
+            if _svm_done:
+                if _svm_results: st.session_state.svm_results = _svm_results
+                st.success("✅ SVM training complete!")
+                if st.button("📂 Load SVM Model", key="load_svm"):
+                    load_svm.clear()
+                    p,lm = load_svm()
+                    st.session_state.svm_pipeline = p
+                    st.session_state.svm_labels   = lm
+                    st.rerun()
 
     st.markdown("---")
 
@@ -580,69 +560,39 @@ with tab_train:
         bc1, bc2 = st.columns(2)
         with bc1:
             bow_data   = st.text_input("Dataset path (BoW)", value=DEFAULT_DATA, key="bow_data")
-            bow_c      = st.select_slider("C value", options=[0.01,0.1,0.5,1.0,2.0,5.0,10.0], value=5.0, key="bow_c")
+            bow_c      = st.select_slider("C value", options=[0.01,0.1,0.3,0.5,1.0,2.0,5.0,10.0], value=0.3, key="bow_c")
         with bc2:
             bow_feat   = st.select_slider("Max BoW features", options=[10000,50000,100000,200000], value=100000, key="bow_feat")
             bow_ngram  = st.radio("N-gram range", [1,2], index=1, horizontal=True, key="bow_ngram")
 
         bow_binary = st.toggle("Binary mode (word presence only)", value=False, key="bow_binary")
 
-        if st.button("🚀 Train LR + BoW", type="primary", key="bow_train_btn"):
-            if not os.path.exists(bow_data):
-                st.error(f"Dataset not found: {bow_data}")
-            else:
-                from sklearn.feature_extraction.text import CountVectorizer
-                from sklearn.linear_model import LogisticRegression
-                from sklearn.pipeline import Pipeline
-                from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
+        if _bow_running:
+            st.button("⏳ BoW training…", disabled=True, use_container_width=True, key="bow_btn_dis")
+        else:
+            if st.button("🚀 Train LR + BoW", type="primary", key="bow_train_btn"):
+                if not os.path.exists(bow_data):
+                    st.error(f"Dataset not found: {bow_data}")
+                else:
+                    _bow_log, _bow_done, _bow_running, _bow_results = [], False, True, None
+                    threading.Thread(target=train_bow_thread,
+                                    args=(bow_data, bow_c, bow_feat, bow_ngram, bow_binary),
+                                    daemon=True).start()
+                    st.rerun()
 
-                with st.status("Training LR + Bag-of-Words...", expanded=True) as status:
-                    try:
-                        st.write("📂 Loading and preprocessing dataset...")
-                        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(bow_data)
-                        st.write(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
-                        st.write(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
-
-                        mode = "binary" if bow_binary else "counts"
-                        st.write(f"⚙️ Building BoW + Logistic Regression  (C={bow_c}, features={bow_feat:,}, ngram=1-{bow_ngram}, mode={mode})")
-                        pipe = Pipeline([
-                            ("bow", CountVectorizer(ngram_range=(1,bow_ngram), max_features=bow_feat,
-                                                    min_df=2, strip_accents="unicode",
-                                                    token_pattern=r"\w{2,}", binary=bow_binary)),
-                            ("lr",  LogisticRegression(C=bow_c, max_iter=1000, solver="lbfgs",
-                                                        random_state=RANDOM_STATE)),
-                        ])
-                        st.write("🚀 Training Logistic Regression... (this can take a few minutes)")
-                        pipe.fit(train_x, train_y)
-                        st.write("✅ Training complete!")
-
-                        preds = pipe.predict(test_x)
-                        acc   = accuracy_score(test_y, preds)
-                        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
-                        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
-                        st.write(f"📈 Accuracy: {acc:.4f}  F1: {f1:.4f}  Precision: {p:.4f}  Recall: {r:.4f}")
-
-                        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
-                        with open(BOW_RESULTS,"w") as f: json.dump(results, f, indent=2)
-                        joblib.dump(pipe, BOW_MODEL)
-                        with open(BOW_LABELS,"w") as f: json.dump(label_map, f, indent=2)
-                        st.session_state.bow_results = results
-                        st.write("🎉 BoW model saved!")
-
-                        status.update(label="✅ BoW training complete!", state="complete", expanded=False)
-                    except Exception as e:
-                        import traceback
-                        st.write(f"❌ {e}")
-                        st.code(traceback.format_exc())
-                        status.update(label="❌ BoW training failed", state="error", expanded=True)
-
-        if st.session_state.get("bow_results") is not None:
-            if st.button("📂 Load BoW Model", key="load_bow"):
-                load_bow.clear()
-                p,lm = load_bow()
-                st.session_state.bow_pipeline = p
-                st.session_state.bow_labels   = lm
-                st.rerun()
+        if _bow_log:
+            st.markdown("<div class='log-box'>"+"<br>".join(_bow_log)+"</div>", unsafe_allow_html=True)
+            if _bow_running:
+                time.sleep(2); st.rerun()
+            if _bow_done:
+                if _bow_results: st.session_state.bow_results = _bow_results
+                st.success("✅ BoW training complete!")
+                if st.button("📂 Load BoW Model", key="load_bow"):
+                    load_bow.clear()
+                    p,lm = load_bow()
+                    st.session_state.bow_pipeline = p
+                    st.session_state.bow_labels   = lm
+                    st.rerun()
 
 # ══════════════════════════════════════════════════════════════════
 # TAB 3 — RESULTS
