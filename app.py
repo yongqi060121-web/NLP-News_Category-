@@ -9,7 +9,7 @@ Run with:  streamlit run app.py
 Requires:  pip install streamlit plotly pandas scikit-learn numpy joblib
 """
 
-import os, json, threading, time, re
+import os, json, re
 import numpy as np
 import pandas as pd
 import joblib
@@ -81,39 +81,11 @@ BOW_MODEL    = "./lr_bow_news_classifier.joblib"
 BOW_LABELS   = "./lr_bow_label_mapping.json"
 BOW_RESULTS  = "./lr_bow_training_results.json"
 
-DEFAULT_DATA = "News_Category_Dataset_v3.json"
-RANDOM_STATE = 42
-
-CATEGORY_MAP = {
-    "POLITICS":"POLITICS & NEWS","WELLNESS":"WELLNESS","HEALTHY LIVING":"WELLNESS",
-    "ENTERTAINMENT":"ENTERTAINMENT","ARTS":"ENTERTAINMENT",
-    "ARTS & CULTURE":"ENTERTAINMENT","CULTURE & ARTS":"ENTERTAINMENT",
-    "TRAVEL":"TRAVEL","STYLE & BEAUTY":"STYLE & BEAUTY","STYLE":"STYLE & BEAUTY",
-    "PARENTING":"WELLNESS","PARENTS":"WELLNESS",
-    "QUEER VOICES":None,"BLACK VOICES":None,"WOMEN":None,"LATINO VOICES":None,
-    "FOOD & DRINK":"FOOD & DRINK","TASTE":"FOOD & DRINK",
-    "BUSINESS":"POLITICS & NEWS","MONEY":"POLITICS & NEWS","COMEDY":"ENTERTAINMENT","SPORTS":"SPORTS",
-    "HOME & LIVING":"HOME & LIVING",
-    "THE WORLDPOST":"POLITICS & NEWS","WORLDPOST":"POLITICS & NEWS","WORLD NEWS":"POLITICS & NEWS",
-    "WEDDINGS":"WEDDINGS & DIVORCE","DIVORCE":"WEDDINGS & DIVORCE",
-    "CRIME":"POLITICS & NEWS","MEDIA":"POLITICS & NEWS","U.S. NEWS":"POLITICS & NEWS","WEIRD NEWS":"POLITICS & NEWS",
-    "IMPACT":None,"GOOD NEWS":None,"RELIGION":None,
-    "GREEN":"POLITICS & NEWS","ENVIRONMENT":"POLITICS & NEWS",
-    "SCIENCE":"WELLNESS","TECH":"WELLNESS",
-    "COLLEGE":"WELLNESS","EDUCATION":"WELLNESS","FIFTY":None,
-}
-
 CATEGORY_ICONS = {
     "POLITICS & NEWS":"📰","WELLNESS":"🧘","ENTERTAINMENT":"🎬","TRAVEL":"✈️",
     "STYLE & BEAUTY":"💄","FOOD & DRINK":"🍽️","SPORTS":"⚽",
     "HOME & LIVING":"🏠","WEDDINGS & DIVORCE":"💍",
 }
-
-# ─────────────────────────────────────────────────────────────────
-# Global variables for training threads
-# ─────────────────────────────────────────────────────────────────
-_svm_log, _svm_running, _svm_done, _svm_results = [], False, False, None
-_bow_log, _bow_running, _bow_done, _bow_results = [], False, False, None
 
 # ─────────────────────────────────────────────────────────────────
 # Session state
@@ -176,121 +148,6 @@ def get_top_bow_words(headline, description, top_n=8):
     return wc[:top_n]
 
 # ─────────────────────────────────────────────────────────────────
-# Training functions
-# ─────────────────────────────────────────────────────────────────
-def _common_load(data_path):
-    """Shared data loading and preprocessing."""
-    from sklearn.model_selection import train_test_split
-    from sklearn.preprocessing import LabelEncoder
-    df = pd.read_json(data_path, lines=True)
-    df = df[["headline","short_description","category"]].dropna(subset=["headline","category"])
-    df["merged_category"] = df["category"].map(CATEGORY_MAP)
-    df = df[df["merged_category"].notna()].reset_index(drop=True)
-    df["short_description"] = df["short_description"].fillna("")
-    df["text"] = (df["headline"].str.strip() + " " + df["short_description"].str.strip()).str.strip()
-    df["text"] = df["text"].apply(clean_text)
-    df = df[df["text"].str.len() > 0].reset_index(drop=True)
-    le = LabelEncoder()
-    df["label"] = le.fit_transform(df["merged_category"])
-    label_names = list(le.classes_)
-    label_map   = {str(i): n for i, n in enumerate(label_names)}
-    train_x, test_x, train_y, test_y = train_test_split(
-        df["text"].tolist(), df["label"].tolist(),
-        test_size=0.2, random_state=RANDOM_STATE, stratify=df["label"]
-    )
-    return train_x, test_x, train_y, test_y, label_names, label_map
-
-
-def train_svm_thread(data_path, c_val, max_feat, ngram_max):
-    global _svm_log, _svm_running, _svm_done, _svm_results
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.svm import LinearSVC
-    from sklearn.pipeline import Pipeline
-    from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
-
-    def log(m): _svm_log.append(m)
-    try:
-        log("📂 Loading and preprocessing dataset...")
-        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(data_path)
-        log(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
-        log(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
-
-        log(f"⚙️  Building TF-IDF + LinearSVC  (C={c_val}, features={max_feat:,}, ngram=1-{ngram_max})")
-        pipe = Pipeline([
-            ("tfidf", TfidfVectorizer(ngram_range=(1,ngram_max), max_features=max_feat,
-                                      sublinear_tf=True, min_df=2,
-                                      strip_accents="unicode", token_pattern=r"\w{2,}")),
-            ("svm",  LinearSVC(C=c_val, max_iter=2000, random_state=RANDOM_STATE)),
-        ])
-        log("🚀 Training SVM... (1–5 minutes)")
-        pipe.fit(train_x, train_y)
-        log("✅ Training complete!")
-
-        preds = pipe.predict(test_x)
-        acc   = accuracy_score(test_y, preds)
-        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
-        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
-        log(f"📈 Accuracy:{acc:.4f}  F1:{f1:.4f}  Precision:{p:.4f}  Recall:{r:.4f}")
-
-        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
-        with open(SVM_RESULTS,"w") as f: json.dump(results, f, indent=2)
-        joblib.dump(pipe, SVM_MODEL)
-        with open(SVM_LABELS,"w") as f: json.dump(label_map, f, indent=2)
-        _svm_results = results
-        _svm_done    = True
-        log("🎉 SVM model saved! Click 'Load SVM Model'.")
-    except Exception as e:
-        import traceback; log(f"❌ {e}"); log(traceback.format_exc())
-    finally:
-        _svm_running = False
-
-
-def train_bow_thread(data_path, c_val, max_feat, ngram_max, binary):
-    global _bow_log, _bow_running, _bow_done, _bow_results
-    from sklearn.feature_extraction.text import CountVectorizer
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.pipeline import Pipeline
-    from sklearn.metrics import accuracy_score, precision_recall_fscore_support, classification_report
-
-    def log(m): _bow_log.append(m)
-    try:
-        log("📂 Loading and preprocessing dataset...")
-        train_x, test_x, train_y, test_y, label_names, label_map = _common_load(data_path)
-        log(f"✅ {len(train_x)+len(test_x):,} articles | {len(label_names)} classes")
-        log(f"   Train: {len(train_x):,} | Test: {len(test_x):,}")
-
-        mode = "binary" if binary else "counts"
-        log(f"⚙️  Building BoW + Logistic Regression  (C={c_val}, features={max_feat:,}, ngram=1-{ngram_max}, mode={mode})")
-        pipe = Pipeline([
-            ("bow", CountVectorizer(ngram_range=(1,ngram_max), max_features=max_feat,
-                                    min_df=2, strip_accents="unicode",
-                                    token_pattern=r"\w{2,}", binary=binary)),
-            ("lr",  LogisticRegression(C=c_val, max_iter=1000, solver="lbfgs",
-                                    random_state=RANDOM_STATE)),
-        ])
-        log("🚀 Training Logistic Regression... (2–8 minutes)")
-        pipe.fit(train_x, train_y)
-        log("✅ Training complete!")
-
-        preds = pipe.predict(test_x)
-        acc   = accuracy_score(test_y, preds)
-        p,r,f1,_ = precision_recall_fscore_support(test_y, preds, average="weighted")
-        report = classification_report(test_y, preds, target_names=label_names, output_dict=True)
-        log(f"📈 Accuracy:{acc:.4f}  F1:{f1:.4f}  Precision:{p:.4f}  Recall:{r:.4f}")
-
-        results = {"accuracy":round(acc,4),"f1":round(f1,4),"precision":round(p,4),"recall":round(r,4),"per_class":report}
-        with open(BOW_RESULTS,"w") as f: json.dump(results, f, indent=2)
-        joblib.dump(pipe, BOW_MODEL)
-        with open(BOW_LABELS,"w") as f: json.dump(label_map, f, indent=2)
-        _bow_results = results
-        _bow_done    = True
-        log("🎉 BoW model saved! Click 'Load BoW Model'.")
-    except Exception as e:
-        import traceback; log(f"❌ {e}"); log(traceback.format_exc())
-    finally:
-        _bow_running = False
-
-# ─────────────────────────────────────────────────────────────────
 # Auto-load models if saved on disk
 # ─────────────────────────────────────────────────────────────────
 if svm_exists() and st.session_state.svm_pipeline is None:
@@ -339,7 +196,7 @@ with st.sidebar:
     elif svm_exists():
         st.markdown('<span class="pill-yellow">⚠ On disk</span>', unsafe_allow_html=True)
     else:
-        st.markdown('<span class="pill-red">✘ Not trained</span>', unsafe_allow_html=True)
+        st.markdown('<span class="pill-red">✘ Not found</span>', unsafe_allow_html=True)
 
     st.markdown("**🟠 LR + Bag-of-Words**")
     if st.session_state.bow_pipeline:
@@ -347,7 +204,7 @@ with st.sidebar:
     elif bow_exists():
         st.markdown('<span class="pill-yellow">⚠ On disk</span>', unsafe_allow_html=True)
     else:
-        st.markdown('<span class="pill-red">✘ Not trained</span>', unsafe_allow_html=True)
+        st.markdown('<span class="pill-red">✘ Not found</span>', unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("### 📋 9 Categories")
@@ -357,8 +214,8 @@ with st.sidebar:
 # ─────────────────────────────────────────────────────────────────
 # Tabs
 # ─────────────────────────────────────────────────────────────────
-tab_predict, tab_train, tab_results = st.tabs([
-    "🔍 Predict & Compare", "🚀 Train", "📊 Results"
+tab_predict, tab_results = st.tabs([
+    "🔍 Predict & Compare", "📊 Results"
 ])
 
 # ══════════════════════════════════════════════════════════════════
@@ -367,7 +224,8 @@ tab_predict, tab_train, tab_results = st.tabs([
 with tab_predict:
     neither = st.session_state.svm_pipeline is None and st.session_state.bow_pipeline is None
     if neither:
-        st.info("⚠️ No models loaded yet. Go to the **Train** tab to train both models first.")
+        st.info("⚠️ Model files not found. Make sure svm_news_classifier.joblib and "
+                "lr_bow_news_classifier.joblib are present in the app directory.")
     else:
         st.markdown("#### Enter a news article")
         if "headline_input" not in st.session_state:
@@ -511,91 +369,7 @@ with tab_predict:
                         st.warning(f"⚠️ Models disagree — SVM says **{svm_pred}**, BoW says **{bow_pred}**")
 
 # ══════════════════════════════════════════════════════════════════
-# TAB 2 — TRAIN
-# ══════════════════════════════════════════════════════════════════
-with tab_train:
-    st.markdown("Train each model independently using the same dataset.")
-
-    # ── SVM section ──
-    with st.expander("🔵 SVM + TF-IDF", expanded=True):
-        sc1, sc2 = st.columns(2)
-        with sc1:
-            svm_data   = st.text_input("Dataset path (SVM)", value=DEFAULT_DATA, key="svm_data")
-            svm_c      = st.select_slider("C value", options=[0.01,0.1,0.3,0.5,1.0,2.0,5.0,10.0], value=0.3, key="svm_c")
-        with sc2:
-            svm_feat   = st.select_slider("Max TF-IDF features", options=[10000,50000,100000,200000], value=100000, key="svm_feat")
-            svm_ngram  = st.radio("N-gram range", [1,2], index=1, horizontal=True, key="svm_ngram")
-
-        if _svm_running:
-            st.button("⏳ SVM training…", disabled=True, use_container_width=True, key="svm_btn_dis")
-        else:
-            if st.button("🚀 Train SVM", type="primary", key="svm_train_btn"):
-                if not os.path.exists(svm_data):
-                    st.error(f"Dataset not found: {svm_data}")
-                else:
-                    _svm_log, _svm_done, _svm_running, _svm_results = [], False, True, None
-                    threading.Thread(target=train_svm_thread,
-                                    args=(svm_data, svm_c, svm_feat, svm_ngram),
-                                    daemon=True).start()
-                    st.rerun()
-
-        if _svm_log:
-            st.markdown("<div class='log-box'>"+"<br>".join(_svm_log)+"</div>", unsafe_allow_html=True)
-            if _svm_running:
-                time.sleep(2); st.rerun()
-            if _svm_done:
-                if _svm_results: st.session_state.svm_results = _svm_results
-                st.success("✅ SVM training complete!")
-                if st.button("📂 Load SVM Model", key="load_svm"):
-                    load_svm.clear()
-                    p,lm = load_svm()
-                    st.session_state.svm_pipeline = p
-                    st.session_state.svm_labels   = lm
-                    st.rerun()
-
-    st.markdown("---")
-
-    # ── BoW section ──
-    with st.expander("🟠 Logistic Regression + Bag-of-Words", expanded=True):
-        bc1, bc2 = st.columns(2)
-        with bc1:
-            bow_data   = st.text_input("Dataset path (BoW)", value=DEFAULT_DATA, key="bow_data")
-            bow_c      = st.select_slider("C value", options=[0.01,0.1,0.3,0.5,1.0,2.0,5.0,10.0], value=0.3, key="bow_c")
-        with bc2:
-            bow_feat   = st.select_slider("Max BoW features", options=[10000,50000,100000,200000], value=100000, key="bow_feat")
-            bow_ngram  = st.radio("N-gram range", [1,2], index=1, horizontal=True, key="bow_ngram")
-
-        bow_binary = st.toggle("Binary mode (word presence only)", value=False, key="bow_binary")
-
-        if _bow_running:
-            st.button("⏳ BoW training…", disabled=True, use_container_width=True, key="bow_btn_dis")
-        else:
-            if st.button("🚀 Train LR + BoW", type="primary", key="bow_train_btn"):
-                if not os.path.exists(bow_data):
-                    st.error(f"Dataset not found: {bow_data}")
-                else:
-                    _bow_log, _bow_done, _bow_running, _bow_results = [], False, True, None
-                    threading.Thread(target=train_bow_thread,
-                                    args=(bow_data, bow_c, bow_feat, bow_ngram, bow_binary),
-                                    daemon=True).start()
-                    st.rerun()
-
-        if _bow_log:
-            st.markdown("<div class='log-box'>"+"<br>".join(_bow_log)+"</div>", unsafe_allow_html=True)
-            if _bow_running:
-                time.sleep(2); st.rerun()
-            if _bow_done:
-                if _bow_results: st.session_state.bow_results = _bow_results
-                st.success("✅ BoW training complete!")
-                if st.button("📂 Load BoW Model", key="load_bow"):
-                    load_bow.clear()
-                    p,lm = load_bow()
-                    st.session_state.bow_pipeline = p
-                    st.session_state.bow_labels   = lm
-                    st.rerun()
-
-# ══════════════════════════════════════════════════════════════════
-# TAB 3 — RESULTS
+# TAB 2 — RESULTS
 # ══════════════════════════════════════════════════════════════════
 with tab_results:
     svm_r = st.session_state.svm_results
