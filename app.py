@@ -103,18 +103,11 @@ MODEL_CFG = {
         "tag"       : "svm-tag",
         "pred_css"  : "pred-svm",
         "metric_css": "metric-svm",
-        # LinearSVC has no predict_proba — the number shown is a softmax over
-        # the one-vs-rest decision margins, which ranks correctly but is NOT a
-        # calibrated probability. Label it honestly.
+        # LinearSVC has no predict_proba — the number shown is a softmax over the
+        # one-vs-rest decision margins. It ranks the classes correctly but is not
+        # a calibrated probability, so it reads lower than the LR probability for
+        # an equally confident prediction. Hence "Score", not "Confidence".
         "score_lbl" : "Score",
-        "score_note": "Softmax over one-vs-rest SVM margins — ranks the classes "
-                      "correctly, but is **not** a calibrated probability, so it "
-                      "is not comparable to the LR probability.",
-        "how"       : "**LinearSVC** over a `FeatureUnion` of two TF-IDF blocks: "
-                      "word 1–2grams (120k features) and character 3–5grams "
-                      "(60k features, `char_wb`). TF-IDF down-weights words that "
-                      "appear everywhere, and the character n-grams give the model "
-                      "signal from misspellings and word fragments. `C=0.3`.",
     },
     "bow": {
         "name"      : "Logistic Regression + Bag-of-Words",
@@ -125,12 +118,6 @@ MODEL_CFG = {
         "pred_css"  : "pred-bow",
         "metric_css": "metric-bow",
         "score_lbl" : "Probability",
-        "score_note": "A real calibrated probability from `predict_proba` — the "
-                      "nine values sum to 100%.",
-        "how"       : "**LogisticRegression** over a `CountVectorizer` "
-                      "bag-of-words: raw counts of word 1–2grams (120k features, "
-                      "`min_df=2`). No IDF weighting — a word that appears in "
-                      "every article counts the same as a rare one. `C=0.3`.",
     },
 }
 
@@ -216,10 +203,7 @@ def predict_svm(headline, description):
     probs  = exp / exp.sum()
     idx    = int(np.argmax(probs))
     pred   = lm[str(int(pipe.classes_[idx]))]
-    # margin gap is the honest "how sure is the SVM" signal
-    ordered = np.sort(scores)[::-1]
-    margin  = float(ordered[0] - ordered[1])
-    return pred, _score_dict(pipe, lm, probs), margin
+    return pred, _score_dict(pipe, lm, probs)
 
 
 def predict_bow(headline, description):
@@ -229,7 +213,7 @@ def predict_bow(headline, description):
     probs = pipe.predict_proba([text])[0]
     idx   = int(np.argmax(probs))
     pred  = lm[str(int(pipe.classes_[idx]))]
-    return pred, _score_dict(pipe, lm, probs), None
+    return pred, _score_dict(pipe, lm, probs)
 
 
 def predict(mkey, headline, description):
@@ -372,22 +356,6 @@ def model_metric_cards(mkey):
         </div>""", unsafe_allow_html=True)
 
 
-def class_scorecard(mkey, pred):
-    """This model's held-out performance on the category it just predicted."""
-    res = st.session_state[f"{mkey}_results"]
-    if not res:
-        return
-    pc = res["per_class"].get(pred)
-    if not pc:
-        return
-    st.caption(
-        f"On the held-out test set this model scores **F1 {pc['f1-score']:.3f}** "
-        f"on {CATEGORY_ICONS.get(pred,'📰')} {pred} "
-        f"(precision {pc['precision']:.3f} · recall {pc['recall']:.3f} · "
-        f"{int(pc['support']):,} test articles)."
-    )
-
-
 # ─────────────────────────────────────────────────────────────────
 # Auto-load models if saved on disk
 # ─────────────────────────────────────────────────────────────────
@@ -483,8 +451,8 @@ with tab_compare:
                     out = {}
                     for mkey in ("svm", "bow"):
                         if st.session_state[f"{mkey}_pipeline"] is not None:
-                            p, s, m = predict(mkey, headline, description)
-                            out[mkey] = {"pred": p, "scores": s, "margin": m,
+                            p, s = predict(mkey, headline, description)
+                            out[mkey] = {"pred": p, "scores": s,
                                          "words": word_contributions(mkey, headline, description, p)}
                     st.session_state.cmp_result = out
 
@@ -515,12 +483,6 @@ with tab_compare:
                 else:
                     st.warning(f"⚠️ Models disagree — SVM says **{result['svm']['pred']}**, "
                                f"BoW says **{result['bow']['pred']}**")
-                st.caption(
-                    "⚠️ The two percentages are **not** on the same scale. The LR number is a "
-                    "real probability; the SVM number is a softmax over decision margins "
-                    "(LinearSVC has no `predict_proba`), which reads systematically lower. "
-                    "Compare the *rankings*, not the raw percentages."
-                )
 
 # ══════════════════════════════════════════════════════════════════
 # TABS 2 & 3 — SINGLE-MODEL PREDICTION
@@ -530,7 +492,6 @@ def render_model_tab(mkey):
     pipe = st.session_state[f"{mkey}_pipeline"]
 
     st.markdown(f"#### {cfg['dot']} {cfg['name']}")
-    st.caption(cfg["how"])
 
     if pipe is None:
         st.info(f"⚠️ {cfg['name']} is not loaded — no prediction possible in this tab. "
@@ -550,9 +511,9 @@ def render_model_tab(mkey):
             st.warning("Please enter at least a headline.")
         else:
             with st.spinner(f"Running {cfg['short']}…"):
-                p, s, m = predict(mkey, headline, description)
+                p, s = predict(mkey, headline, description)
                 st.session_state[f"{mkey}_result"] = {
-                    "pred": p, "scores": s, "margin": m,
+                    "pred": p, "scores": s,
                     "words": word_contributions(mkey, headline, description, p, top_n=12),
                 }
 
@@ -564,20 +525,12 @@ def render_model_tab(mkey):
 
     with left:
         prediction_box(mkey, r["pred"], r["scores"][r["pred"]])
-        st.caption(cfg["score_note"])
-        if r["margin"] is not None:
-            st.caption(f"Margin between the top two classes: **{r['margin']:.2f}** "
-                       f"(bigger = more decisive; below ~0.2 is a close call).")
-        class_scorecard(mkey, r["pred"])
         st.markdown("##### All 9 categories")
         st.plotly_chart(score_figure(r["scores"], r["pred"], cfg["color"], height=360),
                         key=f"{mkey}_scores")
 
     with right:
         st.markdown("##### 🔤 Words driving this prediction")
-        st.caption(f"Each bar is a word's feature value × its weight for "
-                   f"**{r['pred']}**. Coloured bars pushed toward that category, "
-                   f"red bars pushed away.")
         if r["words"]:
             st.plotly_chart(contribution_figure(r["words"], cfg["color"], height=420),
                             key=f"{mkey}_words")
@@ -586,8 +539,7 @@ def render_model_tab(mkey):
             with st.expander("Show as table"):
                 st.dataframe(wdf, hide_index=True)
         else:
-            st.info("None of the words in this article are in the model's vocabulary, "
-                    "so the prediction falls back to the class priors.")
+            st.info("No words from this article are in the model's vocabulary.")
 
 
 with tab_svm:
